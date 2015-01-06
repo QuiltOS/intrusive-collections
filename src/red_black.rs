@@ -35,27 +35,42 @@ impl<T> Node<T> where T: Intrusive<Node<T>> + Ord
   }
 
   #[inline]
+  fn set_right(&mut self, ptr: *mut T) {
+    self.right_red.set_ptr(ptr)
+  }
+
+  #[inline]
   fn color(&mut self) -> bool {
     self.right_red.eliminate().1
   }
+
+  #[inline]
+  fn set_color(&mut self, color: bool) {
+    self.right_red.set_flag(color)
+  }
 }
 
-trait NodeExt: Intrusive<Node<Self>> + Ord {
-  #[inline]
-  fn rotate_left(&mut self) -> *mut Self {
-    let (old_right, color) = self.field().right_red.eliminate();
+trait NodeExt  {
+  fn rotate_left(&mut self) -> Self;
+  fn rotate_right(&mut self) -> Self;
+}
 
-    self.field().right_red = AlignedPtrPun::new(old_right.field().left, color);
-    old_right.field().left = self.rf();
+impl<T>  NodeExt for *mut T where T: Intrusive<Node<T>> + Ord
+{
+  #[inline]
+  fn rotate_left(&mut self) -> Self {
+    let old_right = self.field().right();
+    self.field().set_right(old_right.field().left);
+    old_right.field().left = *self;
     old_right
   }
 
   #[inline]
-  fn rotate_right(&mut self) -> *mut Self {
+  fn rotate_right(&mut self) -> Self {
     let old_left = self.field().left;
 
     self.field().left = old_left.field().right();
-    old_left.field().right_red = AlignedPtrPun::new(self.rf(), old_left.field().color());
+    old_left.field().set_right(*self);
     old_left
   }
 }
@@ -64,8 +79,8 @@ trait NodeExt: Intrusive<Node<Self>> + Ord {
 /// bits are stored in the least significant bit of right-child pointers thus
 /// making node linkage as compact as is possible for red-black trees.
 ///
-/// Ported from https://github.com/thestinger/allocator/blob/master/rb.h In turn
-/// from jemalloc
+/// Ported from https://github.com/thestinger/allocator/blob/master/rb.h. In
+/// turn from jemalloc.
 pub struct Tree<T> {
   root: *mut T,
   nil:  T
@@ -234,4 +249,94 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
     }
     self.sanitize(ret)
   }
+
+  #[inline]
+  pub fn insert(&mut self, node: *mut T) {
+    let mut path: [PathElem<T>, ..::core::uint::BITS << 1] = unsafe { uninitialized() };
+    *node.field() = Node::new(self);
+
+    // Wind
+    {
+      path[0].node = self.root;
+      let mut iter = path.iter_mut();
+      let mut cur  = iter.next().unwrap();
+      let mut next = iter.next().unwrap();
+      loop {
+        if cur.node == self.nil.rf() { break };
+
+        cur.cmp = unsafe { (*node).cmp(&*cur.node) };
+        next.node = match cur.cmp {
+          Equal   => unreachable!(),
+          Less    => cur.node.field().left,
+          Greater => cur.node.field().right(),
+        };
+
+        cur = next;
+        next = iter.next().unwrap();
+      }
+      cur.node = node;
+    }
+
+    // Unwind
+    {
+      let mut iter = path.iter_mut().rev();
+      let mut prev = iter.next().unwrap();
+      while let Some(cur) = iter.next() {
+        let mut cnode = cur.node;
+        cnode = match cur.cmp {
+          Less => {
+            let left = prev.node;
+            cnode.field().left = cnode;
+            if left.field().color() {
+              let left_left = left.field().left;
+              if left_left.field().color() {
+                // Fix up 4-node
+                left_left.field().set_color(false);
+                cnode.rotate_right()
+              } else {
+                cnode // keep current
+              }
+            } else {
+              return
+            }
+          },
+          #[cfg(not(ndebug))]
+          Equal => unreachable!(),
+          _ => {
+            let right = prev.node;
+            node.field().set_right(right);
+            if right.field().color() {
+              let left = right.field().left;
+              if left.field().color() {
+                // Split 3-node
+                left.field().set_color(false);
+                right.field().set_color(false);
+                cnode.field().set_color(true);
+                cnode // keep current
+              } else {
+                let tred = cnode.field().color();
+                let tnode = cnode.rotate_left();
+                tnode.field().set_color(tred);
+                cnode.field().set_color(true);
+                tnode
+              }
+            } else {
+              return
+            }
+          },
+        };
+        cur.node = cnode;
+        prev = cur;
+      }
+    }
+
+    // Set root, and paint it black
+    self.root = path[0].node;
+    self.root.field().set_color(false);
+  }
+}
+
+struct PathElem<T> {
+  node: *mut T,
+  cmp:  Ordering,
 }
