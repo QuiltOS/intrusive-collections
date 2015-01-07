@@ -637,6 +637,109 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
     self.root = path[0].node;
     assert_eq!(!self.root.field().color(), true);
   }
+
+
+  fn iter_recur<F>(&mut self, node: *mut T, cb: &mut F) -> *mut T
+    where F: FnMut(&mut Self, *mut T) -> *mut T
+  {
+    if node == self.nil.rf() {
+      self.nil.rf()
+    } else {
+      {
+        let ret = self.iter_recur(node.field().left, cb);
+        if ret != self.nil.rf() { return ret };
+      }
+      {
+        let ret = (*cb)(self, node);
+        if ret != 0 as *mut T { return ret };
+      }
+      self.iter_recur(node.field().right(), cb)
+    }
+  }
+
+  fn iter_start<F>(&mut self, start: *mut T, node: *mut T, cb: &mut F) -> *mut T
+    where F: FnMut(&mut Self, *mut T) -> *mut T
+  {
+    match unsafe { uninitialized() } {
+      Less    => {
+        let mut ret = self.iter_start(start, node.field().left, cb);
+        if ret != self.nil.rf() { return ret };
+
+        ret = (*cb)(self, node);
+        if ret != 0 as *mut T { return ret };
+
+        self.iter_recur(node.field().right(), cb)
+      },
+      Greater => self.iter_start(start, node.field().right(), cb),
+      Equal   => {
+        let ret = (*cb)(self, node);
+        if ret != 0 as *mut T { return ret };
+
+        self.iter_recur(node.field().right(), cb)
+      },
+    }
+  }
+
+  pub fn iter<F>(&mut self, start: *mut T, cb: &mut F) -> *mut T
+    where F: FnMut(&mut Self, *mut T) -> *mut T
+  {
+    let ret = if start != 0 as *mut T {
+      self.iter_start(start, self.root, cb)
+    } else {
+      self.iter_recur(self.root, cb)
+    };
+    self.sanitize(ret)
+  }
+
+
+  fn reverse_iter_recur<F>(&mut self, node: *mut T, cb: &mut F) -> *mut T
+    where F: FnMut(&mut Self, *mut T) -> *mut T
+  {
+    if node == self.nil.rf() {
+      self.nil.rf()
+    } else {
+      {
+        let ret = self.reverse_iter_recur(node.field().right(), cb);
+        if ret != self.nil.rf() { return ret };
+      }
+      {
+        let ret = (*cb)(self, node);
+        if ret != 0 as *mut T { return ret };
+      }
+      self.reverse_iter_recur(node.field().left, cb)
+    }
+  }
+
+  fn reverse_iter_start<F>(&mut self, start: *mut T, node: *mut T, cb: &mut F) -> *mut T
+    where F: FnMut(&mut Self, *mut T) -> *mut T
+  {
+    match unsafe { uninitialized() } {
+      Less    => {
+        let mut ret = self.reverse_iter_start(start, node.field().right(), cb);
+        if ret != self.nil.rf() { return ret };
+        ret = (*cb)(self, node);
+        if ret != 0 as *mut T { return ret };
+        self.reverse_iter_recur(node.field().left, cb)
+      },
+      Greater => self.reverse_iter_start(start, node.field().left, cb),
+      Equal   => {
+        let ret = (*cb)(self, node);
+        if ret != 0 as *mut T { return ret };
+        self.reverse_iter_recur(node.field().left, cb)
+      },
+    }
+  }
+
+  pub fn reverse_iter<F>(&mut self, start: *mut T, cb: &mut F) -> *mut T
+    where F: FnMut(&mut Self, *mut T) -> *mut T
+  {
+    let ret = if start != 0 as *mut T {
+      self.reverse_iter_start(start, self.root, cb)
+    } else {
+      self.reverse_iter_recur(self.root, cb)
+    };
+    self.sanitize(ret)
+  }
 }
 
 struct PathElem<T> {
