@@ -338,9 +338,9 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
   pub fn remove(&mut self, node: *mut T) {
     let mut path: [PathElem<T>, ..::core::uint::BITS << 1] = unsafe { uninitialized() };
 
-    let nodep;
     path[0].node = self.root;
     {
+      let nodep;
       let first_elem = &mut path[0] as *mut PathElem<T>;
       let mut iter_1 = path.iter_mut();
       {
