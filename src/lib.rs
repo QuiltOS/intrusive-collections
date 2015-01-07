@@ -8,7 +8,6 @@ extern crate alloc;
 
 mod intrusive;
 mod aligned_ptr_pun;
-mod easy_unsafe_ref;
 
 pub mod red_black;
 

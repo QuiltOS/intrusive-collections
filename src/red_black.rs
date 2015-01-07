@@ -4,7 +4,6 @@ use core::mem::uninitialized;
 
 use intrusive::{Intrusive, IntrusiveExt};
 use aligned_ptr_pun::AlignedPtrPun;
-use easy_unsafe_ref::EasyUnsafeRef;
 
 
 /// The fields requied to be in a node to store it in a intrusive red-black
@@ -24,8 +23,8 @@ impl<T> Node<T> where T: Intrusive<Node<T>> + Ord
   #[inline]
   pub fn new(tree: &mut Tree<T>) -> Node<T> {
     Node {
-      left:      tree.nil.rf(),
-      right_red: AlignedPtrPun::new(tree.nil.rf(), true),
+      left:      tree.nil_ref(),
+      right_red: AlignedPtrPun::new(tree.nil_ref(), true),
     }
   }
 
@@ -95,11 +94,15 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
 
   #[inline]
   pub fn init(&mut self) {
-    self.root = self.nil.rf();
+    self.root = self.nil_ref();
     *self.nil.field() = Node {
-      left:      self.nil.rf(),
-      right_red: AlignedPtrPun::new(self.nil.rf(), false),
+      left:      self.nil_ref(),
+      right_red: AlignedPtrPun::new(self.nil_ref(), false),
     };
+  }
+
+  fn nil_ref(&mut self) -> *mut T {
+    &mut self.nil as *mut T
   }
 
   // Utils, actual functions subst null ptr for sentinal ptr
@@ -108,8 +111,8 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
   fn first_(&mut self, subtree: *mut T) -> *mut T {
     let mut node = subtree;
 
-    if node != self.nil.rf() {
-      while node.field().left != self.nil.rf() {
+    if node != self.nil_ref() {
+      while node.field().left != self.nil_ref() {
         node = node.field().left;
       }
     }
@@ -120,8 +123,8 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
   fn last_(&mut self, subtree: *mut T) -> *mut T {
     let mut node = subtree;
 
-    if node != self.nil.rf() {
-      while node.field().right() != self.nil.rf() {
+    if node != self.nil_ref() {
+      while node.field().right() != self.nil_ref() {
         node = node.field().right();
       }
     }
@@ -129,7 +132,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
   }
 
   fn sanitize(&mut self, ptr: *mut T) -> *mut T {
-    if ptr == self.nil.rf() {
+    if ptr == self.nil_ref() {
       0 as *mut T
     } else {
       ptr
@@ -152,12 +155,12 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
   pub fn next(&mut self, node: *mut T) -> *mut T {
     debug_assert!(node != 0 as *mut T);
     let mut ret;
-    if node.field().right() != self.nil.rf() {
+    if node.field().right() != self.nil_ref() {
       ret = self.first_(node.field().right());
     } else {
       let mut tnode = self.root;
-      ret = self.nil.rf();
-      assert!(tnode != self.nil.rf());
+      ret = self.nil_ref();
+      assert!(tnode != self.nil_ref());
       loop {
         tnode = match unsafe { (*node).cmp(&*tnode) } {
           Less    => {
@@ -167,7 +170,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
           Greater => tnode.field().right(),
           Equal   => break,
         };
-        assert!(tnode != self.nil.rf());
+        assert!(tnode != self.nil_ref());
       }
     }
     self.sanitize(ret)
@@ -176,12 +179,12 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
   #[inline]
   pub fn prev(&mut self, node: *mut T) -> *mut T {
     let mut ret;
-    if node.field().left != self.nil.rf() {
+    if node.field().left != self.nil_ref() {
       ret = self.last_(node.field().left);
     } else {
       let mut tnode = self.root;
-      ret = self.nil.rf();
-      assert!(tnode != self.nil.rf());
+      ret = self.nil_ref();
+      assert!(tnode != self.nil_ref());
       loop {
         tnode = match unsafe { (*node).cmp(&*tnode) } {
           Less    => tnode.field().left,
@@ -191,7 +194,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
           },
           Equal   => break,
         };
-        assert!(tnode != self.nil.rf());
+        assert!(tnode != self.nil_ref());
       }
     }
     self.sanitize(ret)
@@ -200,7 +203,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
   #[inline]
   pub fn search(&mut self, key: *mut T) -> *mut T {
     let mut ret = self.root;
-    while ret != self.nil.rf() {
+    while ret != self.nil_ref() {
       ret = match unsafe { (*key).cmp(&*ret) } {
         Less    => ret.field().left,
         Greater => ret.field().right(),
@@ -212,9 +215,9 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
 
   #[inline]
   pub fn nsearch(&mut self, key: *mut T) -> *mut T {
-    let mut ret = self.nil.rf();
+    let mut ret = self.nil_ref();
     let mut tnode = self.root;
-    while tnode != self.nil.rf() {
+    while tnode != self.nil_ref() {
       tnode = match unsafe { (*key).cmp(&*ret) } {
         Less    => {
           ret = tnode;
@@ -232,9 +235,9 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
 
   #[inline]
   pub fn psearch(&mut self, key: *mut T) -> *mut T {
-    let mut ret = self.nil.rf();
+    let mut ret = self.nil_ref();
     let mut tnode = self.root;
-    while tnode != self.nil.rf() {
+    while tnode != self.nil_ref() {
       tnode = match unsafe { (*key).cmp(&*ret) } {
         Less    => ret.field().left,
         Greater => {
@@ -262,7 +265,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
       let mut cur  = iter.next().unwrap();
       let mut next = iter.next().unwrap();
       loop {
-        if cur.node == self.nil.rf() { break };
+        if cur.node == self.nil_ref() { break };
 
         cur.cmp = unsafe { (*node).cmp(&*cur.node) };
         next.node = match cur.cmp {
@@ -347,7 +350,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
         let mut cur  = iter_1.next().unwrap();
         let mut next = iter_1.next().unwrap();
         loop {
-          assert!(cur.node != self.nil.rf()); // if node is in tree will never hit this
+          assert!(cur.node != self.nil_ref()); // if node is in tree will never hit this
 
           cur.cmp = unsafe { (*node).cmp(&*cur.node) };
           match cur.cmp {
@@ -366,7 +369,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
           cur = next;
           next = iter_1.next().unwrap();
 
-          if cur.node == self.nil.rf() { break };
+          if cur.node == self.nil_ref() { break };
 
           cur.cmp = Less;
           next.node = cur.node.field().left;
@@ -406,7 +409,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
           }
         } else {
           let left = node.field().left;
-          if left != self.nil.rf() {
+          if left != self.nil_ref() {
             // node has no successor, but it has a left child.
             // Splice node out, without losing the left child.
             assert!(node.field().color() == false);
@@ -421,14 +424,14 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
             }
           } else if cur as *mut PathElem<T> == first_elem {
             // The tree only contained one node
-            self.root = self.nil.rf();
+            self.root = self.nil_ref();
             return
           }
         }
         if cur.node.field().color() == true {
           // Prune red node, which reqires no fixup
           assert!(next.cmp == Less);
-          next.node.field().left = self.nil.rf();
+          next.node.field().left = self.nil_ref();
           return
         }
         // The node to be pruned is black, so unwind until balance is restored.
@@ -542,7 +545,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
                   //   (b)
                   //   /
                   // (b)
-                  assert!(left_right != self.nil.rf());
+                  assert!(left_right != self.nil_ref());
                   left_right.field().set_color(true);
                   tnode = cur.node.rotate_right();
                   tnode.field().set_color(false);
@@ -642,12 +645,12 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
   fn iter_recur<F>(&mut self, node: *mut T, cb: &mut F) -> *mut T
     where F: FnMut(&mut Self, *mut T) -> *mut T
   {
-    if node == self.nil.rf() {
-      self.nil.rf()
+    if node == self.nil_ref() {
+      self.nil_ref()
     } else {
       {
         let ret = self.iter_recur(node.field().left, cb);
-        if ret != self.nil.rf() { return ret };
+        if ret != self.nil_ref() { return ret };
       }
       {
         let ret = (*cb)(self, node);
@@ -663,7 +666,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
     match unsafe { uninitialized() } {
       Less    => {
         let mut ret = self.iter_start(start, node.field().left, cb);
-        if ret != self.nil.rf() { return ret };
+        if ret != self.nil_ref() { return ret };
 
         ret = (*cb)(self, node);
         if ret != 0 as *mut T { return ret };
@@ -695,12 +698,12 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
   fn reverse_iter_recur<F>(&mut self, node: *mut T, cb: &mut F) -> *mut T
     where F: FnMut(&mut Self, *mut T) -> *mut T
   {
-    if node == self.nil.rf() {
-      self.nil.rf()
+    if node == self.nil_ref() {
+      self.nil_ref()
     } else {
       {
         let ret = self.reverse_iter_recur(node.field().right(), cb);
-        if ret != self.nil.rf() { return ret };
+        if ret != self.nil_ref() { return ret };
       }
       {
         let ret = (*cb)(self, node);
@@ -716,7 +719,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
     match unsafe { uninitialized() } {
       Less    => {
         let mut ret = self.reverse_iter_start(start, node.field().right(), cb);
-        if ret != self.nil.rf() { return ret };
+        if ret != self.nil_ref() { return ret };
         ret = (*cb)(self, node);
         if ret != 0 as *mut T { return ret };
         self.reverse_iter_recur(node.field().left, cb)
