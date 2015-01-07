@@ -379,7 +379,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
       iter_2.next();
       {
         let mut cur = iter_2.next().unwrap();
-        let mut next = iter_2.next().unwrap();
+        let next = iter_2.next().unwrap();
 
         if cur.node != node {
           // Swap node with its successor.
@@ -520,7 +520,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
                 let tnode;
                 let left_right = left.field().right();
                 let left_right_left = left_right.field().left;
-                if (left_right_left.field().color() == true) {
+                if left_right_left.field().color() == true {
                   //      ||
                   //    pathp(b)
                   //   /        \\
@@ -559,9 +559,9 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
                   }
                 }
                 return;
-              } else if (cur.node.field().color() == true) {
+              } else if cur.node.field().color() == true {
                 let left_left = left.field().left;
-                if (left_left.field().color() == true) {
+                if left_left.field().color() == true {
                   //        ||
                   //      pathp(r)
                   //     /        \\
@@ -594,7 +594,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
                 }
               } else {
                 let left_left = left.field().left;
-                if (left_left.field().color() == true) {
+                if left_left.field().color() == true {
                   //               ||
                   //             pathp(b)
                   //            /        \\
@@ -633,7 +633,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
         }
       }
     }
-    // Set root.
+    // Set root
     self.root = path[0].node;
     assert_eq!(!self.root.field().color(), true);
   }
