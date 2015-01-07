@@ -334,6 +334,309 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
     self.root = path[0].node;
     self.root.field().set_color(false);
   }
+
+  pub fn remove(&mut self, node: *mut T) {
+    let mut path: [PathElem<T>, ..::core::uint::BITS << 1] = unsafe { uninitialized() };
+
+    let nodep;
+    path[0].node = self.root;
+    {
+      let first_elem = &mut path[0] as *mut PathElem<T>;
+      let mut iter_1 = path.iter_mut();
+      {
+        let mut cur  = iter_1.next().unwrap();
+        let mut next = iter_1.next().unwrap();
+        loop {
+          assert!(cur.node != self.nil.rf()); // if node is in tree will never hit this
+
+          cur.cmp = unsafe { (*node).cmp(&*cur.node) };
+          match cur.cmp {
+            Less    => next.node = cur.node.field().left,
+            Greater => next.node = cur.node.field().right(),
+            Equal   => {
+              next.node = cur.node.field().right();
+              break
+            }
+          }
+        }
+        cur.cmp = Greater;
+        nodep = cur;
+
+        loop {
+          cur = next;
+          next = iter_1.next().unwrap();
+
+          if cur.node == self.nil.rf() { break };
+
+          cur.cmp = Less;
+          next.node = cur.node.field().left;
+        }
+        assert_eq!(nodep.node, node);
+      }
+
+      let mut iter_2 = iter_1.rev();
+      // thrice: pathp[1] -> pathp -> pathp-- -> path[-1]
+      iter_2.next();
+      {
+        let mut cur = iter_2.next().unwrap();
+        let mut next = iter_2.next().unwrap();
+
+        if cur.node != node {
+          // Swap node with its successor.
+          let tred = cur.node.field().color();
+          cur.node.field().set_color(node.field().color());
+          cur.node.field().left = node.field().left;
+          // If node's successor is its right child, the following code will do
+          // the wrong thing for the right child pointer.  However, it doesn't
+          // matter, because the pointer will be properly set when the successor
+          // is pruned.
+          cur.node.field().set_right(node.field().right());
+          node.field().set_color(tred);
+          // The pruned leaf node's chil pointers are never accessed again, so
+          // don't bother setting them to nil
+          nodep.node = cur.node;
+          cur.node = node;
+          if nodep as *mut PathElem<T> == first_elem {
+            self.root = nodep.node;
+          } else {
+            match next.cmp {
+              Less => next.node.field().left = nodep.node,
+              _    => next.node.field().set_right(nodep.node),
+            }
+          }
+        } else {
+          let left = node.field().left;
+          if left != self.nil.rf() {
+            // node has no successor, but it has a left child.
+            // Splice node out, without losing the left child.
+            assert!(node.field().color() == false);
+            assert!(left.field().color() == true);
+            if cur as *mut PathElem<T> == cur as *mut PathElem<T>  {
+              self.root = nodep.node;
+            } else {
+              match next.cmp {
+                Less => next.node.field().left = left,
+                _    => next.node.field().set_right(left),
+              }
+            }
+          } else if cur as *mut PathElem<T> == first_elem {
+            // The tree only contained one node
+            self.root = self.nil.rf();
+            return
+          }
+        }
+        if cur.node.field().color() == true {
+          // Prune red node, which reqires no fixup
+          assert!(next.cmp == Less);
+          next.node.field().left = self.nil.rf();
+          return
+        }
+        // The node to be pruned is black, so unwind until balance is restored.
+        // pathp -> pathp--
+        let mut prev = cur;
+        cur = next;
+        while let Some(next) = iter_2.next() {
+          match cur.cmp {
+            Equal => unreachable!(),
+            Less => {
+              cur.node.field().left = prev.node;
+              assert!(next.node.field().color() == true);
+              if cur.node.field().color() == true {
+                let mut right = cur.node.field().right();
+                let right_left = right.field().left;
+                let tnode = if right_left.field().color() == true {
+                  // In the following diagrams, ||, //, and
+                  // indicate the path to the removed node.
+                  //
+                  //      ||
+                  //    pathp(r)
+                  //  //        \
+                  // (b)        (b)
+                  //           /
+                  //          (r)
+                  //
+                  cur.node.field().set_color(false);
+                  cur.node.field().set_right(right.rotate_right());
+                  cur.node.rotate_left()
+                } else {
+                  //      ||
+                  //    pathp(r)
+                  //  //        \
+                  // (b)        (b)
+                  //           /
+                  //          (b)
+                  //
+                  cur.node.rotate_left()
+                };
+                // Balance restored, but rotation modified subtree
+                // root.
+                assert!(cur as *mut PathElem<T> > first_elem);
+                match next.cmp {
+                  Less => next.node.field().left = tnode,
+                  _ => next.node.field().set_right(tnode),
+                }
+                return
+              } else {
+                let mut right = cur.node.field().right();
+                let right_left = right.field().left;
+                if right_left.field().color() == true {
+                  //      ||
+                  //    pathp(b)
+                  //  //        \
+                  // (b)        (b)
+                  //           /
+                  //          (r)
+                  right_left.field().set_color(false);
+                  cur.node.field().set_right(right.rotate_right());
+                  let tnode = cur.node.rotate_left();
+                  // Balance restored, but rotation modified
+                  // subtree root, which may actually be the tree
+                  // root.
+                  if cur as *mut PathElem<T> == first_elem {
+                    self.root = tnode;
+                  } else {
+                    match next.cmp {
+                      Less => next.node.field().left = tnode,
+                      _ => next.node.field().set_right(tnode),
+                    }
+                  }
+                  return
+                } else {
+                  //      ||
+                  //    pathp(b)
+                  //  //        \
+                  // (b)        (b)
+                  //           /
+                  //          (b)
+                  cur.node.field().set_color(true);
+                  cur.node = cur.node.rotate_left();
+                }
+              }
+            },
+            Greater => {
+              cur.node.field().set_right(prev.node);
+              let left = cur.node.field().left;
+              if left.field().color() == true {
+                let tnode;
+                let left_right = left.field().right();
+                let left_right_left = left_right.field().left;
+                if (left_right_left.field().color() == true) {
+                  //      ||
+                  //    pathp(b)
+                  //   /        \\
+                  // (r)        (b)
+                  //   \
+                  //   (b)
+                  //   /
+                  // (r)
+                  left_right_left.field().set_color(false);
+                  let mut unode = cur.node.rotate_right();
+                  unode.field().set_right(cur.node.rotate_right());
+                  tnode = unode.rotate_left();
+                } else {
+                  //      ||
+                  //    pathp(b)
+                  //   /        \\
+                  // (r)        (b)
+                  //   \
+                  //   (b)
+                  //   /
+                  // (b)
+                  assert!(left_right != self.nil.rf());
+                  left_right.field().set_color(true);
+                  tnode = cur.node.rotate_right();
+                  tnode.field().set_color(false);
+                }
+                // Balance restored, but rotation modified subtree
+                // root, which may actually be the tree root.
+                if cur as *mut PathElem<T> == first_elem {
+                  // Set root.
+                  self.root = tnode;
+                } else {
+                  match next.cmp {
+                    Less => next.node.field().left = tnode,
+                    _ => next.node.field().set_right(tnode),
+                  }
+                }
+                return;
+              } else if (cur.node.field().color() == true) {
+                let left_left = left.field().left;
+                if (left_left.field().color() == true) {
+                  //        ||
+                  //      pathp(r)
+                  //     /        \\
+                  //   (b)        (b)
+                  //   /
+                  // (r)
+                  cur.node.field().set_color(false);
+                  left.field().set_color(true);
+                  left_left.field().set_color(false);
+                  let tnode = cur.node.rotate_right();
+                  // Balance restored, but rotation modified
+                  // subtree root.
+                  assert!(cur as *mut PathElem<T> > first_elem);
+                  match next.cmp {
+                    Less => next.node.field().left = tnode,
+                    _ => next.node.field().set_right(tnode),
+                  }
+                  return;
+                } else {
+                  //        ||
+                  //      pathp(r)
+                  //     /        \\
+                  //   (b)        (b)
+                  //   /
+                  // (b)
+                  left.field().set_color(true);
+                  cur.node.field().set_color(false);
+                  // Balance restored.
+                  return;
+                }
+              } else {
+                let left_left = left.field().left;
+                if (left_left.field().color() == true) {
+                  //               ||
+                  //             pathp(b)
+                  //            /        \\
+                  //          (b)        (b)
+                  //          /
+                  //        (r)
+                  left_left.field().set_color(false);
+                  let tnode = cur.node.rotate_right();
+                  // Balance restored, but rotation modified
+                  // subtree root, which may actually be the tree
+                  // root.
+                  if cur as *mut PathElem<T> == first_elem {
+                    // Set root.
+                    self.root = tnode;
+                  } else {
+                    match next.cmp {
+                      Less => next.node.field().left = tnode,
+                      _ => next.node.field().set_right(tnode),
+                    }
+                  }
+                  return;
+                } else {
+                  //               ||
+                  //             pathp(b)
+                  //            /        \\
+                  //          (b)        (b)
+                  //          /
+                  //        (b)
+                  left.field().set_color(true);
+                }
+              }
+            }
+          }
+          prev = cur;
+          cur = next;
+        }
+      }
+    }
+    // Set root.
+    self.root = path[0].node;
+    assert_eq!(!self.root.field().color(), true);
+  }
 }
 
 struct PathElem<T> {
