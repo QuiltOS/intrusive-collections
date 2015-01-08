@@ -642,106 +642,81 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
   }
 
 
-  fn iter_recur<F>(&mut self, node: *mut T, cb: &mut F) -> *mut T
-    where F: FnMut(&mut Self, *mut T) -> *mut T
+  fn iter_recur<F, A>(&mut self, node: *mut T, cb: &mut F) -> Option<A>
+    where F: FnMut(&mut Self, *mut T) -> Option<A>
   {
     if node == self.nil_ref() {
-      self.nil_ref()
+      None
     } else {
-      {
-        let ret = self.iter_recur(node.field().left, cb);
-        if ret != self.nil_ref() { return ret };
-      }
-      {
-        let ret = (*cb)(self, node);
-        if ret != 0 as *mut T { return ret };
-      }
-      self.iter_recur(node.field().right(), cb)
+      self.iter_recur(node.field().left, cb)
+        .or_else(|:| (*cb)(self, node))
+        .or_else(|:| self.iter_recur(node.field().right(), cb))
     }
   }
 
-  fn iter_start<F>(&mut self, start: *mut T, node: *mut T, cb: &mut F) -> *mut T
-    where F: FnMut(&mut Self, *mut T) -> *mut T
+  fn iter_start<F, A>(&mut self, start: &mut T, node: *mut T, cb: &mut F) -> Option<A>
+    where F: FnMut(&mut Self, *mut T) -> Option<A>
   {
-    match unsafe { uninitialized() } {
+    match (*start).cmp(unsafe { &*node }) {
       Less    => {
-        let mut ret = self.iter_start(start, node.field().left, cb);
-        if ret != self.nil_ref() { return ret };
-
-        ret = (*cb)(self, node);
-        if ret != 0 as *mut T { return ret };
-
-        self.iter_recur(node.field().right(), cb)
+      self.iter_start(start, node.field().left, cb)
+          .or_else(|:| (*cb)(self, node))
+          .or_else(|:| self.iter_recur(node.field().right(), cb))
       },
       Greater => self.iter_start(start, node.field().right(), cb),
       Equal   => {
-        let ret = (*cb)(self, node);
-        if ret != 0 as *mut T { return ret };
-
-        self.iter_recur(node.field().right(), cb)
+        (*cb)(self, node)
+          .or_else(|:| self.iter_recur(node.field().right(), cb))
       },
     }
   }
 
-  pub fn iter<F>(&mut self, start: *mut T, cb: &mut F) -> *mut T
-    where F: FnMut(&mut Self, *mut T) -> *mut T
+  pub fn iter<F, A>(&mut self, start: Option<&mut T>, cb: &mut F) -> Option<A>
+    where F: FnMut(&mut Self, *mut T) -> Option<A>
   {
-    let ret = if start != 0 as *mut T {
-      self.iter_start(start, self.root, cb)
-    } else {
-      self.iter_recur(self.root, cb)
-    };
-    self.sanitize(ret)
-  }
-
-
-  fn reverse_iter_recur<F>(&mut self, node: *mut T, cb: &mut F) -> *mut T
-    where F: FnMut(&mut Self, *mut T) -> *mut T
-  {
-    if node == self.nil_ref() {
-      self.nil_ref()
-    } else {
-      {
-        let ret = self.reverse_iter_recur(node.field().right(), cb);
-        if ret != self.nil_ref() { return ret };
-      }
-      {
-        let ret = (*cb)(self, node);
-        if ret != 0 as *mut T { return ret };
-      }
-      self.reverse_iter_recur(node.field().left, cb)
+    match start {
+      Some(start) => self.iter_start(start, self.root, cb),
+      None        => self.iter_recur(self.root, cb),
     }
   }
 
-  fn reverse_iter_start<F>(&mut self, start: *mut T, node: *mut T, cb: &mut F) -> *mut T
-    where F: FnMut(&mut Self, *mut T) -> *mut T
+
+  fn reverse_iter_recur<F, A>(&mut self, node: *mut T, cb: &mut F) -> Option<A>
+    where F: FnMut(&mut Self, *mut T) -> Option<A>
   {
-    match unsafe { uninitialized() } {
+    if node == self.nil_ref() {
+      None
+    } else {
+      self.reverse_iter_recur(node.field().right(), cb)
+        .or_else(|:| (*cb)(self, node))
+        .or_else(|:| self.reverse_iter_recur(node.field().left, cb))
+    }
+  }
+
+  fn reverse_iter_start<F, A>(&mut self, start: &mut T, node: *mut T, cb: &mut F) -> Option<A>
+    where F: FnMut(&mut Self, *mut T) -> Option<A>
+  {
+    match (*start).cmp(unsafe { &*node }) {
       Less    => {
-        let mut ret = self.reverse_iter_start(start, node.field().right(), cb);
-        if ret != self.nil_ref() { return ret };
-        ret = (*cb)(self, node);
-        if ret != 0 as *mut T { return ret };
-        self.reverse_iter_recur(node.field().left, cb)
+        self.reverse_iter_start(start, node.field().right(), cb)
+          .or_else(|:| (*cb)(self, node))
+          .or_else(|:| self.reverse_iter_recur(node.field().left, cb))
       },
       Greater => self.reverse_iter_start(start, node.field().left, cb),
       Equal   => {
-        let ret = (*cb)(self, node);
-        if ret != 0 as *mut T { return ret };
-        self.reverse_iter_recur(node.field().left, cb)
+        (*cb)(self, node)
+          .or_else(|:| self.reverse_iter_recur(node.field().left, cb))
       },
     }
   }
 
-  pub fn reverse_iter<F>(&mut self, start: *mut T, cb: &mut F) -> *mut T
-    where F: FnMut(&mut Self, *mut T) -> *mut T
+  pub fn reverse_iter<F, A>(&mut self, start: Option<&mut T>, cb: &mut F) -> Option<A>
+    where F: FnMut(&mut Self, *mut T) -> Option<A>
   {
-    let ret = if start != 0 as *mut T {
-      self.reverse_iter_start(start, self.root, cb)
-    } else {
-      self.reverse_iter_recur(self.root, cb)
-    };
-    self.sanitize(ret)
+    match start {
+      Some(start) => self.reverse_iter_start(start, self.root, cb),
+      None        => self.reverse_iter_recur(self.root, cb),
+    }
   }
 }
 
