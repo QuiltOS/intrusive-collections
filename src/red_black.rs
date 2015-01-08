@@ -18,7 +18,29 @@ pub struct Node<T> {
   right_red: AlignedPtrPun<T>,
 }
 
-impl<T> Node<T> where T: Intrusive<Node<T>> + Ord
+// To make allow users to derive PartialOrd without causing problems
+impl<T> PartialEq for Node<T> {
+  fn eq(&self, _other: &Self) -> bool {
+    // Equality of things in intrusive containers does NOT depend on their
+    // position in container
+    true
+  }
+  fn ne(&self, _other: &Self) -> bool {
+    // Equality of things in intrusive containers does NOT depend on their
+    // position in container
+    false
+  }
+}
+
+impl<T> PartialOrd for Node<T> {
+  fn partial_cmp(&self, _other: &Self) -> Option<Ordering> {
+    // Equality of things in intrusive containers does NOT depend on their
+    // position in container
+    Some(Equal)
+  }
+}
+
+impl<T> Node<T> where T: Intrusive<Node<T>> + PartialOrd
 {
   #[inline]
   pub fn new(tree: &mut Tree<T>) -> Node<T> {
@@ -54,7 +76,7 @@ trait NodeExt  {
   fn rotate_right(&mut self) -> Self;
 }
 
-impl<T>  NodeExt for *mut T where T: Intrusive<Node<T>> + Ord
+impl<T>  NodeExt for *mut T where T: Intrusive<Node<T>> + PartialOrd
 {
   #[inline]
   fn rotate_left(&mut self) -> Self {
@@ -85,7 +107,7 @@ pub struct Tree<T> {
   nil:  T
 }
 
-impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
+impl<T> Tree<T> where T: Intrusive<Node<T>> + PartialOrd
 {
   #[inline]
   pub fn place() -> Tree<T> {
@@ -162,13 +184,13 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
       ret = self.nil_ref();
       assert!(tnode != self.nil_ref());
       loop {
-        tnode = match unsafe { (*node).cmp(&*tnode) } {
-          Less    => {
+        tnode = match unsafe { (*node).partial_cmp(&*tnode) } {
+          None | Some(Less) => {
             ret = tnode;
             tnode.field().left
           },
-          Greater => tnode.field().right(),
-          Equal   => break,
+          Some(Greater)     => tnode.field().right(),
+          Some(Equal)       => break,
         };
         assert!(tnode != self.nil_ref());
       }
@@ -186,13 +208,13 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
       ret = self.nil_ref();
       assert!(tnode != self.nil_ref());
       loop {
-        tnode = match unsafe { (*node).cmp(&*tnode) } {
-          Less    => tnode.field().left,
-          Greater => {
+        tnode = match unsafe { (*node).partial_cmp(&*tnode) } {
+          None | Some(Less) => tnode.field().left,
+          Some(Greater)     => {
             ret   = tnode;
             tnode.field().right()
           },
-          Equal   => break,
+          Some(Equal)       => break,
         };
         assert!(tnode != self.nil_ref());
       }
@@ -204,10 +226,10 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
   pub fn search(&mut self, key: *mut T) -> *mut T {
     let mut ret = self.root;
     while ret != self.nil_ref() {
-      ret = match unsafe { (*key).cmp(&*ret) } {
-        Less    => ret.field().left,
-        Greater => ret.field().right(),
-        Equal   => break,
+      ret = match unsafe { (*key).partial_cmp(&*ret) } {
+        None | Some(Less) => ret.field().left,
+        Some(Greater)     => ret.field().right(),
+        Some(Equal)       => break,
       }
     }
     self.sanitize(ret)
@@ -218,13 +240,13 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
     let mut ret = self.nil_ref();
     let mut tnode = self.root;
     while tnode != self.nil_ref() {
-      tnode = match unsafe { (*key).cmp(&*ret) } {
-        Less    => {
+      tnode = match unsafe { (*key).partial_cmp(&*ret) } {
+        None | Some(Less) => {
           ret = tnode;
           ret.field().left
         },
-        Greater => ret.field().right(),
-        Equal   => {
+        Some(Greater)     => ret.field().right(),
+        Some(Equal)       => {
           ret = tnode;
           break
         },
@@ -238,13 +260,13 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
     let mut ret = self.nil_ref();
     let mut tnode = self.root;
     while tnode != self.nil_ref() {
-      tnode = match unsafe { (*key).cmp(&*ret) } {
-        Less    => ret.field().left,
-        Greater => {
+      tnode = match unsafe { (*key).partial_cmp(&*ret) } {
+        None | Some(Less) => ret.field().left,
+        Some(Greater)     => {
           ret = tnode;
           ret.field().right()
         },
-        Equal   => {
+        Some(Equal)       => {
           ret = tnode;
           break
         },
@@ -267,11 +289,11 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
       loop {
         if cur.node == self.nil_ref() { break };
 
-        cur.cmp = unsafe { (*node).cmp(&*cur.node) };
+        cur.cmp = unsafe { (*node).partial_cmp(&*cur.node) };
         next.node = match cur.cmp {
-          Equal   => unreachable!(),
-          Less    => cur.node.field().left,
-          Greater => cur.node.field().right(),
+          Some(Equal)       => unreachable!(),
+          None | Some(Less) => cur.node.field().left,
+          Some(Greater)     => cur.node.field().right(),
         };
 
         cur = next;
@@ -287,7 +309,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
       while let Some(cur) = iter.next() {
         let mut cnode = cur.node;
         cnode = match cur.cmp {
-          Less => {
+          None | Some(Less) => {
             let left = prev.node;
             cnode.field().left = cnode;
             if left.field().color() {
@@ -304,7 +326,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
             }
           },
           #[cfg(not(ndebug))]
-          Equal => unreachable!(),
+          Some(Equal) => unreachable!(),
           _ => {
             let right = prev.node;
             node.field().set_right(right);
@@ -352,17 +374,17 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
         loop {
           assert!(cur.node != self.nil_ref()); // if node is in tree will never hit this
 
-          cur.cmp = unsafe { (*node).cmp(&*cur.node) };
+          cur.cmp = unsafe { (*node).partial_cmp(&*cur.node) };
           match cur.cmp {
-            Less    => next.node = cur.node.field().left,
-            Greater => next.node = cur.node.field().right(),
-            Equal   => {
+            None | Some(Less) => next.node = cur.node.field().left,
+            Some(Greater)     => next.node = cur.node.field().right(),
+            Some(Equal)       => {
               next.node = cur.node.field().right();
               break
             }
           }
         }
-        cur.cmp = Greater;
+        cur.cmp = Some(Greater);
         nodep = cur;
 
         loop {
@@ -371,7 +393,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
 
           if cur.node == self.nil_ref() { break };
 
-          cur.cmp = Less;
+          cur.cmp = Some(Less);
           next.node = cur.node.field().left;
         }
         assert_eq!(nodep.node, node);
@@ -403,8 +425,8 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
             self.root = nodep.node;
           } else {
             match next.cmp {
-              Less => next.node.field().left = nodep.node,
-              _    => next.node.field().set_right(nodep.node),
+              None | Some(Less) => next.node.field().left = nodep.node,
+              _                 => next.node.field().set_right(nodep.node),
             }
           }
         } else {
@@ -418,8 +440,8 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
               self.root = nodep.node;
             } else {
               match next.cmp {
-                Less => next.node.field().left = left,
-                _    => next.node.field().set_right(left),
+                None | Some(Less) => next.node.field().left = left,
+                _                 => next.node.field().set_right(left),
               }
             }
           } else if cur as *mut PathElem<T> == first_elem {
@@ -430,7 +452,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
         }
         if cur.node.field().color() == true {
           // Prune red node, which reqires no fixup
-          assert!(next.cmp == Less);
+          assert!(next.cmp == Some(Less) || next.cmp == None);
           next.node.field().left = self.nil_ref();
           return
         }
@@ -440,8 +462,8 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
         cur = next;
         while let Some(next) = iter_2.next() {
           match cur.cmp {
-            Equal => unreachable!(),
-            Less => {
+            Some(Equal) => unreachable!(),
+            None | Some(Less) => {
               cur.node.field().left = prev.node;
               assert!(next.node.field().color() == true);
               if cur.node.field().color() == true {
@@ -475,7 +497,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
                 // root.
                 assert!(cur as *mut PathElem<T> > first_elem);
                 match next.cmp {
-                  Less => next.node.field().left = tnode,
+                  None | Some(Less) => next.node.field().left = tnode,
                   _ => next.node.field().set_right(tnode),
                 }
                 return
@@ -499,8 +521,8 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
                     self.root = tnode;
                   } else {
                     match next.cmp {
-                      Less => next.node.field().left = tnode,
-                      _ => next.node.field().set_right(tnode),
+                      None | Some(Less) => next.node.field().left = tnode,
+                      _                 => next.node.field().set_right(tnode),
                     }
                   }
                   return
@@ -516,7 +538,7 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
                 }
               }
             },
-            Greater => {
+            Some(Greater)     => {
               cur.node.field().set_right(prev.node);
               let left = cur.node.field().left;
               if left.field().color() == true {
@@ -557,8 +579,8 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
                   self.root = tnode;
                 } else {
                   match next.cmp {
-                    Less => next.node.field().left = tnode,
-                    _ => next.node.field().set_right(tnode),
+                    None | Some(Less) => next.node.field().left = tnode,
+                    _                 => next.node.field().set_right(tnode),
                   }
                 }
                 return;
@@ -579,8 +601,8 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
                   // subtree root.
                   assert!(cur as *mut PathElem<T> > first_elem);
                   match next.cmp {
-                    Less => next.node.field().left = tnode,
-                    _ => next.node.field().set_right(tnode),
+                    None | Some(Less) => next.node.field().left = tnode,
+                    _                 => next.node.field().set_right(tnode),
                   }
                   return;
                 } else {
@@ -614,8 +636,8 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
                     self.root = tnode;
                   } else {
                     match next.cmp {
-                      Less => next.node.field().left = tnode,
-                      _ => next.node.field().set_right(tnode),
+                      None | Some(Less) => next.node.field().left = tnode,
+                      _                 => next.node.field().set_right(tnode),
                     }
                   }
                   return;
@@ -657,14 +679,14 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
   fn iter_start<F, A>(&mut self, start: &mut T, node: *mut T, cb: &mut F) -> Option<A>
     where F: FnMut(&mut Self, *mut T) -> Option<A>
   {
-    match (*start).cmp(unsafe { &*node }) {
-      Less    => {
+    match (*start).partial_cmp(unsafe { &*node }) {
+      None | Some(Less) => {
       self.iter_start(start, node.field().left, cb)
           .or_else(|:| (*cb)(self, node))
           .or_else(|:| self.iter_recur(node.field().right(), cb))
       },
-      Greater => self.iter_start(start, node.field().right(), cb),
-      Equal   => {
+      Some(Greater)     => self.iter_start(start, node.field().right(), cb),
+      Some(Equal)       => {
         (*cb)(self, node)
           .or_else(|:| self.iter_recur(node.field().right(), cb))
       },
@@ -696,14 +718,14 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
   fn reverse_iter_start<F, A>(&mut self, start: &mut T, node: *mut T, cb: &mut F) -> Option<A>
     where F: FnMut(&mut Self, *mut T) -> Option<A>
   {
-    match (*start).cmp(unsafe { &*node }) {
-      Less    => {
+    match (*start).partial_cmp(unsafe { &*node }) {
+      None | Some(Less) => {
         self.reverse_iter_start(start, node.field().right(), cb)
           .or_else(|:| (*cb)(self, node))
           .or_else(|:| self.reverse_iter_recur(node.field().left, cb))
       },
-      Greater => self.reverse_iter_start(start, node.field().left, cb),
-      Equal   => {
+      Some(Greater)     => self.reverse_iter_start(start, node.field().left, cb),
+      Some(Equal)       => {
         (*cb)(self, node)
           .or_else(|:| self.reverse_iter_recur(node.field().left, cb))
       },
@@ -722,5 +744,5 @@ impl<T> Tree<T> where T: Intrusive<Node<T>> + Ord
 
 struct PathElem<T> {
   node: *mut T,
-  cmp:  Ordering,
+  cmp:  Option<Ordering>,
 }
