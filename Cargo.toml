@@ -1,5 +1,5 @@
 [package]
 
-name = "intrusive-rb-tree"
+name = "intrusive-collections"
 version = "0.0.1"
 authors = ["John Ericson <Ericson2314@Yahoo.com>"]
